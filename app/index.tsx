@@ -23,7 +23,7 @@ export default function Index() {
   }, []);
 
   return (
-    <View className="flex-1 justify-center items-start bg-[#007AFF] pl-6">
+    <View className="flex-1 justify-center items-center bg-[#007AFF]">
       <Animated.View style={{ transform: [{ translateX: slideAnim }] }}>
         <Logo width={120} height={120} />
       </Animated.View>

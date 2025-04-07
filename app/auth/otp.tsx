@@ -1,10 +1,11 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Image } from 'react-native';
 
 const OtpScreen = () => {
   const router = useRouter();
+  const { phone } = useLocalSearchParams();
   const [otp, setOtp] = useState<string[]>(['', '', '', '', '', '']);
   const inputsRef = useRef<Array<TextInput | null>>([]);
 
@@ -21,6 +22,8 @@ const OtpScreen = () => {
   const handleContinue = () => {
     const enteredOtp = otp.join('');
     if (enteredOtp === '000000') {
+      // Store phone number in global scope
+      (global as any).phoneNumber = phone;
       router.replace('/main/ride');
     } else {
       alert('Invalid OTP. Please try again.');

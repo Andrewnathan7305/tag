@@ -38,7 +38,7 @@ export default function PhoneNumber() {
         <TouchableOpacity
           className={`py-4 rounded-xl ${isValid ? 'bg-[#007AFF]' : 'bg-white border border-gray-300'}`}
           onPress={() => {
-            if (isValid) router.replace('/auth/otp'); // replace with actual next screen
+            if (isValid) router.push(`/auth/otp?phone=${phone}`);
           }}
         >
           <Text className={`text-center font-bold ${isValid ? 'text-white' : 'text-black'}`}>

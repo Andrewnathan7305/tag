@@ -2,13 +2,13 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 
-const Yourride = () => {
+const YourRidePage = () => {
   return (
-    <View className="flex-1 justify-center items-center bg-white">
-      <Text className="text-xl">Your Rides Page</Text>
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ fontSize: 24 }}>Hi</Text>
     </View>
   );
 };
 
-export default Yourride;
+export default YourRidePage;
 
