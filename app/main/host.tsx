@@ -4,7 +4,7 @@ import MapView, { Marker, Polyline, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
 // Move API key to a constant
@@ -42,7 +42,7 @@ const HostPage = () => {
   }, []);
 
   const getRoute = async (destination: Coordinate) => {
-    if (!location) return;
+    if (!location) return null;
     
     try {
       setRouteLoading(true);
@@ -65,14 +65,21 @@ const HostPage = () => {
           'Unable to calculate route. Please try again later.',
           [{ text: 'OK' }]
         );
-        return;
+        return null;
       }
       
       if (json.routes && json.routes[0]) {
         const points = json.routes[0].overview_polyline.points;
-        const coordinates = decodePolyline(points);
-        console.log('Decoded coordinates:', coordinates);
+        console.log('Encoded polyline points:', points);
+        let coordinates = decodePolyline(points);
+        
+        // Optimize route points
+        coordinates = optimizeRoutePoints(coordinates);
+        
+        console.log('Optimized coordinates:', coordinates);
+        console.log('Number of coordinates:', coordinates.length);
         setRouteCoordinates(coordinates);
+        return coordinates;
       } else {
         console.error('No routes found in response');
         Alert.alert(
@@ -80,6 +87,7 @@ const HostPage = () => {
           'No route found between locations.',
           [{ text: 'OK' }]
         );
+        return null;
       }
     } catch (error) {
       console.error('Error fetching route:', error);
@@ -88,6 +96,7 @@ const HostPage = () => {
         'Failed to calculate route. Please check your internet connection and try again.',
         [{ text: 'OK' }]
       );
+      return null;
     } finally {
       setRouteLoading(false);
     }
@@ -135,7 +144,55 @@ const HostPage = () => {
     return coordinates;
   };
 
-  const saveRideToFirebase = async () => {
+  const optimizeRoutePoints = (coordinates: Coordinate[]): Coordinate[] => {
+    if (coordinates.length <= 2) return coordinates;
+    
+    const optimized: Coordinate[] = [coordinates[0]];
+    const MIN_DISTANCE = 0.0001; // Approximately 10 meters
+    
+    for (let i = 1; i < coordinates.length - 1; i++) {
+      const prev = coordinates[i - 1];
+      const current = coordinates[i];
+      const next = coordinates[i + 1];
+      
+      // Calculate distance between current point and previous point
+      const distance = calculateDistance(
+        prev.latitude,
+        prev.longitude,
+        current.latitude,
+        current.longitude
+      );
+      
+      // Only add point if it's significantly different from previous point
+      if (distance > MIN_DISTANCE) {
+        optimized.push(current);
+      }
+    }
+    
+    // Always add the last point
+    optimized.push(coordinates[coordinates.length - 1]);
+    
+    return optimized;
+  };
+
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const distance = R * c; // Distance in km
+    return distance;
+  };
+
+  const deg2rad = (deg: number) => {
+    return deg * (Math.PI/180);
+  };
+
+  const saveRideToFirebase = async (coordinates: Coordinate[]) => {
     if (!location || !destinationLocation) {
       console.error('Missing location data');
       Alert.alert(
@@ -149,6 +206,7 @@ const HostPage = () => {
     try {
       console.log('Starting Firebase save operation...');
       console.log('Phone number:', (global as any).phoneNumber);
+      console.log('Current route coordinates:', coordinates);
       
       if (!(global as any).phoneNumber) {
         throw new Error('Phone number is not available');
@@ -177,7 +235,7 @@ const HostPage = () => {
           address: to,
           timestamp: new Date().toISOString()
         },
-        routeCoordinates: routeCoordinates,
+        routeCoordinates: coordinates,
         availableSeats: parseInt(availableSeats),
         price: parseFloat(price),
         phoneNumber: (global as any).phoneNumber,
@@ -185,6 +243,8 @@ const HostPage = () => {
         status: 'available',
         createdAt: serverTimestamp()
       };
+
+      console.log('Saving ride data:', JSON.stringify(rideData, null, 2));
 
       // Save to the main rides collection with rideId as document ID
       const docRef = await addDoc(ridesCollection, rideData);
@@ -224,8 +284,10 @@ const HostPage = () => {
     }
 
     if (destinationLocation) {
-      await getRoute(destinationLocation);
-      await saveRideToFirebase();
+      const coordinates = await getRoute(destinationLocation);
+      if (coordinates) {
+        await saveRideToFirebase(coordinates);
+      }
     }
   };
 
