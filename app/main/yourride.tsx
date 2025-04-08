@@ -94,127 +94,140 @@ const YourRidePage = () => {
     };
   };
 
-  const calculateRouteSimilarity = (riderRoute: Array<{latitude: number, longitude: number}>, 
-                                  hostRoute: Array<{latitude: number, longitude: number}>) => {
-    console.log('\n=== Route Comparison ===');
-    console.log('Rider route points:', riderRoute.length);
-    console.log('Host route points:', hostRoute.length);
+  // Function to normalize a path to have a specific number of points
+  function normalizePath(path: { latitude: number; longitude: number }[], numPoints: number) {
+    if (path.length <= numPoints) {
+      return path;
+    }
     
-    let totalDistance = 0;
-    let pointsCompared = 0;
-    let maxDistance = 0;
-    let matchedPoints = 0;
+    const result = [];
+    const step = (path.length - 1) / (numPoints - 1);
+    
+    for (let i = 0; i < numPoints; i++) {
+      const index = i * step;
+      const lowIndex = Math.floor(index);
+      const highIndex = Math.min(lowIndex + 1, path.length - 1);
+      const fraction = index - lowIndex;
+      
+      const lowPoint = path[lowIndex];
+      const highPoint = path[highIndex];
+      
+      result.push({
+        latitude: lowPoint.latitude + (highPoint.latitude - lowPoint.latitude) * fraction,
+        longitude: lowPoint.longitude + (highPoint.longitude - lowPoint.longitude) * fraction
+      });
+    }
+    
+    return result;
+  }
 
-    // For each point in the rider's route
-    for (let i = 0; i < riderRoute.length; i++) {
-      const riderPoint = riderRoute[i];
+  // Function to calculate the direction of a path
+  function calculatePathDirection(path: { latitude: number; longitude: number }[]) {
+    if (path.length < 2) {
+      return { latitude: 0, longitude: 0 };
+    }
+    
+    const start = path[0];
+    const end = path[path.length - 1];
+    
+    return {
+      latitude: end.latitude - start.latitude,
+      longitude: end.longitude - start.longitude
+    };
+  }
+
+  // Function to calculate similarity between two directions
+  function calculateDirectionSimilarity(dir1: { latitude: number; longitude: number }, dir2: { latitude: number; longitude: number }) {
+    // Calculate dot product
+    const dotProduct = dir1.latitude * dir2.latitude + dir1.longitude * dir2.longitude;
+    
+    // Calculate magnitudes
+    const mag1 = Math.sqrt(dir1.latitude * dir1.latitude + dir1.longitude * dir1.longitude);
+    const mag2 = Math.sqrt(dir2.latitude * dir2.latitude + dir2.longitude * dir2.longitude);
+    
+    if (mag1 === 0 || mag2 === 0) {
+      return 0;
+    }
+    
+    // Calculate cosine of angle
+    const cosAngle = dotProduct / (mag1 * mag2);
+    
+    // Convert to similarity (0-1 range, where 1 means same direction)
+    return (cosAngle + 1) / 2;
+  }
+
+  // Function to calculate path similarity percentage
+  function calculatePathSimilarity(riderPath: { latitude: number; longitude: number }[], hostPath: { latitude: number; longitude: number }[]) {
+    console.log('\n=== Calculating Path Similarity ===');
+    console.log('Rider path points:', riderPath.length);
+    console.log('Host path points:', hostPath.length);
+    
+    // 1. Normalize paths to have similar number of points
+    const numPoints = 50; // Use 50 points for comparison
+    const normalizedRiderPath = normalizePath(riderPath, numPoints);
+    const normalizedHostPath = normalizePath(hostPath, numPoints);
+    
+    console.log('Normalized to', numPoints, 'points each');
+    
+    // 2. Calculate point-to-point distances
+    let totalDistance = 0;
+    let matchedPoints = 0;
+    let maxDistance = 0;
+    
+    for (let i = 0; i < normalizedRiderPath.length; i++) {
+      const riderPoint = normalizedRiderPath[i];
       let minDistance = Infinity;
       
-      // Check against each segment of the host's route
-      for (let j = 0; j < hostRoute.length - 1; j++) {
-        const hostStart = hostRoute[j];
-        const hostEnd = hostRoute[j + 1];
-        
-        // Calculate distance from rider point to host route segment
-        const distance = distanceToLineSegment(
-          riderPoint.latitude,
-          riderPoint.longitude,
-          hostStart.latitude,
-          hostStart.longitude,
-          hostEnd.latitude,
-          hostEnd.longitude
+      // Find closest point in host path
+      for (let j = 0; j < normalizedHostPath.length; j++) {
+        const hostPoint = normalizedHostPath[j];
+        const distance = calculateDistance(
+          riderPoint.latitude, riderPoint.longitude,
+          hostPoint.latitude, hostPoint.longitude
         );
         
         minDistance = Math.min(minDistance, distance);
       }
       
-      console.log(`Point ${i} min distance to host route:`, minDistance.toFixed(3), 'km');
+      totalDistance += minDistance;
+      maxDistance = Math.max(maxDistance, minDistance);
       
-      // If point is within 400m of any segment, consider it a match
-      if (minDistance <= 0.4) { // 400m threshold
-        totalDistance += minDistance;
-        pointsCompared++;
-        maxDistance = Math.max(maxDistance, minDistance);
+      if (minDistance <= 0.5) { // 500m threshold
         matchedPoints++;
       }
-    }
-    
-    // Calculate percentage of matched points
-    const matchPercentage = (matchedPoints / riderRoute.length) * 100;
-    console.log('Matched points:', matchedPoints, 'out of', riderRoute.length);
-    console.log('Match percentage:', matchPercentage.toFixed(2), '%');
-    
-    if (pointsCompared === 0) {
-      console.log('❌ No points matched within 400m of host route');
-      return 9999;
-    }
-    
-    const avgDistance = totalDistance / pointsCompared;
-    console.log('Average matched point distance:', avgDistance.toFixed(3), 'km');
-    console.log('Maximum matched point distance:', maxDistance.toFixed(3), 'km');
-    
-    // If average distance is too high or match percentage is too low
-    if (avgDistance > 0.4 || matchPercentage < 50) { // 400m threshold, 50% match required
-      console.log('❌ Routes are too different');
-      return 9999;
-    }
-    
-    console.log('✅ Routes are similar enough');
-    return avgDistance;
-  };
-
-  // New function to check if a point is along a route
-  const isPointAlongRoute = (point: {latitude: number, longitude: number}, route: Array<{latitude: number, longitude: number}>) => {
-    // Check each segment of the route
-    for (let i = 0; i < route.length - 1; i++) {
-      const start = route[i];
-      const end = route[i + 1];
       
-      // Calculate distance from point to line segment
-      const distance = distanceToLineSegment(
-        point.latitude,
-        point.longitude,
-        start.latitude,
-        start.longitude,
-        end.latitude,
-        end.longitude
-      );
-      
-      // If point is within 500m of any segment, consider it along the route
-      if (distance <= 0.5) {
-        return true;
+      if (i % 10 === 0) {
+        console.log(`Point ${i}: min distance = ${minDistance.toFixed(3)} km`);
       }
     }
     
-    return false;
-  };
-
-  // Calculate distance from point to line segment
-  const distanceToLineSegment = (lat: number, lon: number, lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; // Earth's radius in km
+    // 3. Calculate direction similarity
+    const riderDirection = calculatePathDirection(normalizedRiderPath);
+    const hostDirection = calculatePathDirection(normalizedHostPath);
+    const directionSimilarity = calculateDirectionSimilarity(riderDirection, hostDirection);
     
-    // Convert to radians
-    const φ = lat * Math.PI / 180;
-    const λ = lon * Math.PI / 180;
-    const φ1 = lat1 * Math.PI / 180;
-    const λ1 = lon1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const λ2 = lon2 * Math.PI / 180;
+    console.log('Direction similarity:', (directionSimilarity * 100).toFixed(2) + '%');
     
-    // Calculate the cross-track distance
-    const dλ = λ2 - λ1;
-    const y = Math.sin(dλ) * Math.cos(φ2);
-    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dλ);
-    const θ = Math.atan2(y, x);
+    // 4. Calculate overall similarity percentage
+    const pointMatchPercentage = (matchedPoints / normalizedRiderPath.length) * 100;
+    const avgDistance = totalDistance / normalizedRiderPath.length;
+    const distanceScore = Math.max(0, 100 - (avgDistance * 20)); // Scale factor
     
-    // Calculate the along-track distance
-    const d = Math.acos(Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(dλ)) * R;
+    console.log('Point match percentage:', pointMatchPercentage.toFixed(2) + '%');
+    console.log('Average distance:', avgDistance.toFixed(3), 'km');
+    console.log('Distance score:', distanceScore.toFixed(2) + '%');
+    console.log('Max distance:', maxDistance.toFixed(3), 'km');
     
-    // Calculate the cross-track distance
-    const xtrack = Math.asin(Math.sin(d / R) * Math.sin(θ)) * R;
+    // 5. Combine metrics with weights
+    const similarityPercentage = 
+      (pointMatchPercentage * 0.6) + 
+      (distanceScore * 0.2) + 
+      (directionSimilarity * 100 * 0.2);
+      
+    console.log('Overall similarity percentage:', similarityPercentage.toFixed(2) + '%');
     
-    return Math.abs(xtrack);
-  };
+    return similarityPercentage;
+  }
 
   const fetchNearbyHosts = async (currentLocation: Location.LocationObject) => {
     try {
@@ -223,14 +236,6 @@ const YourRidePage = () => {
         latitude: currentLocation.coords.latitude,
         longitude: currentLocation.coords.longitude
       });
-      
-      // Calculate 500m radius points for current location
-      const radiusPoints = calculateRadiusPoints(
-        currentLocation.coords.latitude,
-        currentLocation.coords.longitude,
-        0.5 // 500m = 0.5km
-      );
-      console.log('500m radius points:', radiusPoints);
       
       // Simplified query to avoid needing composite index
       const hostsQuery = query(
@@ -319,28 +324,20 @@ const YourRidePage = () => {
       }
 
       const riderRoute = riderRide.routeCoordinates;
-      const riderDestination = riderRide.endLocation;
-      
-      // Calculate 500m radius points for rider's destination
-      const destinationRadiusPoints = calculateRadiusPoints(
-        riderDestination.latitude,
-        riderDestination.longitude,
-        0.5 // 500m = 0.5km
-      );
       
       console.log('\nRider Details:');
       console.log('Rider Phone:', riderRide.phoneNumber);
-      console.log('Rider Destination:', riderDestination);
-      console.log('Destination 500m radius points:', destinationRadiusPoints);
       console.log('Rider Route:', JSON.stringify(riderRoute, null, 2));
       console.log('Number of rider route points:', riderRoute.length);
+
+      // Set similarity threshold (70%)
+      const SIMILARITY_THRESHOLD = 70;
 
       hostsSnapshot.forEach((doc) => {
         const hostData = doc.data() as Ride;
         // Filter for available hosts client-side
         if (hostData.status === 'available') {
           const hostRoute = hostData.routeCoordinates;
-          const hostDestination = hostData.endLocation;
           
           console.log('\n=== Checking Host ===');
           console.log('Host ID:', doc.id);
@@ -349,101 +346,17 @@ const YourRidePage = () => {
             latitude: hostData.startLocation.latitude,
             longitude: hostData.startLocation.longitude
           });
+          console.log('Number of host route points:', hostRoute.length);
           
-          // Check if rider is within 500m of host's starting location
-          const distanceToHost = calculateDistance(
-            currentLocation.coords.latitude,
-            currentLocation.coords.longitude,
-            hostData.startLocation.latitude,
-            hostData.startLocation.longitude
-          );
+          // Calculate path similarity
+          const similarityPercentage = calculatePathSimilarity(riderRoute, hostRoute);
           
-          console.log('Distance to host start:', distanceToHost.toFixed(3), 'km');
-          
-          // Check if rider is within 500m of any segment of host's route
-          let isNearRoute = false;
-          let minRouteDistance = Infinity;
-          
-          for (let i = 0; i < hostRoute.length - 1; i++) {
-            const hostStart = hostRoute[i];
-            const hostEnd = hostRoute[i + 1];
-            
-            const distance = distanceToLineSegment(
-              currentLocation.coords.latitude,
-              currentLocation.coords.longitude,
-              hostStart.latitude,
-              hostStart.longitude,
-              hostEnd.latitude,
-              hostEnd.longitude
-            );
-            
-            minRouteDistance = Math.min(minRouteDistance, distance);
-            
-            if (distance <= 0.5) { // 500m threshold
-              isNearRoute = true;
-              break;
-            }
-          }
-          
-          console.log('Minimum distance to host route:', minRouteDistance.toFixed(3), 'km');
-          
-          // Check if rider's destination is within 500m of host's destination
-          const destinationDistance = calculateDistance(
-            riderDestination.latitude,
-            riderDestination.longitude,
-            hostDestination.latitude,
-            hostDestination.longitude
-          );
-          
-          console.log('Distance to host destination:', destinationDistance.toFixed(3), 'km');
-          
-          // Check if rider's destination is within 500m of any segment of host's route
-          let isDestinationNearRoute = false;
-          let minDestinationRouteDistance = Infinity;
-          
-          for (let i = 0; i < hostRoute.length - 1; i++) {
-            const hostStart = hostRoute[i];
-            const hostEnd = hostRoute[i + 1];
-            
-            const distance = distanceToLineSegment(
-              riderDestination.latitude,
-              riderDestination.longitude,
-              hostStart.latitude,
-              hostStart.longitude,
-              hostEnd.latitude,
-              hostEnd.longitude
-            );
-            
-            minDestinationRouteDistance = Math.min(minDestinationRouteDistance, distance);
-            
-            if (distance <= 0.5) { // 500m threshold
-              isDestinationNearRoute = true;
-              break;
-            }
-          }
-          
-          console.log('Minimum distance from destination to host route:', minDestinationRouteDistance.toFixed(3), 'km');
-          
-          // Check if start point criteria are met
-          const startPointMatch = distanceToHost <= 0.5 || isNearRoute;
-          console.log('Start point match:', startPointMatch);
-          
-          // Check if end point criteria are met
-          const endPointMatch = destinationDistance <= 0.5 || isDestinationNearRoute;
-          console.log('End point match:', endPointMatch);
-          
-          // If both start and end point criteria are met, consider it a match
-          if (startPointMatch && endPointMatch) {
-            console.log('✅ Host matches both start and end point criteria');
+          // Check if paths are similar enough
+          if (similarityPercentage >= SIMILARITY_THRESHOLD) {
+            console.log(`✅ Host path is ${similarityPercentage.toFixed(2)}% similar to rider path (threshold: ${SIMILARITY_THRESHOLD}%)`);
             nearbyHostsData.push(hostData);
           } else {
-            console.log('❌ Host does not match criteria');
-            if (!startPointMatch) {
-              console.log('❌ Start point criteria not met');
-            }
-            if (!endPointMatch) {
-              console.log('❌ End point criteria not met');
-            }
+            console.log(`❌ Host path is only ${similarityPercentage.toFixed(2)}% similar to rider path (threshold: ${SIMILARITY_THRESHOLD}%)`);
           }
         }
       });
