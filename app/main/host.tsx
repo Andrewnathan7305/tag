@@ -25,6 +25,9 @@ const HostPage = () => {
   const [destinationLocation, setDestinationLocation] = useState<Coordinate | null>(null);
   const [availableSeats, setAvailableSeats] = useState('1');
   const [price, setPrice] = useState('');
+  const [currentLocationText, setCurrentLocationText] = useState('');
+  const [actualAddress, setActualAddress] = useState('');
+  const [isCurrentLocation, setIsCurrentLocation] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -291,6 +294,46 @@ const HostPage = () => {
     }
   };
 
+  const handleCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required to use current location.');
+        return;
+      }
+
+      const currentLocation = await Location.getCurrentPositionAsync({});
+      setLocation(currentLocation);
+      setCurrentLocationText('Current Location');
+      setIsCurrentLocation(true);
+      
+      // Get address from coordinates
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${currentLocation.coords.latitude},${currentLocation.coords.longitude}&key=${GOOGLE_MAPS_API_KEY}`
+      );
+      const json = await response.json();
+      
+      if (json.results && json.results[0]) {
+        const address = json.results[0].formatted_address;
+        setActualAddress(address);
+        setFrom(address); // Store the actual address for internal use
+      }
+    } catch (error) {
+      console.error('Error getting current location:', error);
+      Alert.alert('Error', 'Failed to get current location. Please try again.');
+    }
+  };
+
+  const handleInputChange = (text: string) => {
+    setCurrentLocationText(text);
+    setFrom(text);
+    setIsCurrentLocation(false);
+  };
+
+  const handleCurrentLocationClick = () => {
+    setIsCurrentLocation(false);
+  };
+
   if (loading || !location) {
     return (
       <View className="flex-1 justify-center items-center">
@@ -307,12 +350,68 @@ const HostPage = () => {
           <View style={styles.locationIcon}>
             <Ionicons name="location" size={20} color="#2563eb" />
           </View>
-          <TextInput
-            placeholder="Current Location"
-            value={from}
-            style={styles.input}
-            editable={false}
-          />
+          <View style={styles.inputWrapper}>
+            {isCurrentLocation ? (
+              <TouchableOpacity 
+                style={styles.input}
+                onPress={handleCurrentLocationClick}
+              >
+                <Text style={styles.currentLocationText}>{currentLocationText}</Text>
+              </TouchableOpacity>
+            ) : (
+              <GooglePlacesAutocomplete
+                placeholder="From"
+                fetchDetails={true}
+                textInputProps={{
+                  value: currentLocationText,
+                  onChangeText: handleInputChange
+                }}
+                onPress={(data, details = null) => {
+                  const startLocation = data.description;
+                  setFrom(startLocation);
+                  setCurrentLocationText(startLocation);
+                  if (details?.geometry?.location) {
+                    setLocation({
+                      coords: {
+                        latitude: details.geometry.location.lat,
+                        longitude: details.geometry.location.lng,
+                        altitude: null,
+                        accuracy: null,
+                        altitudeAccuracy: null,
+                        heading: null,
+                        speed: null,
+                      },
+                      timestamp: new Date().getTime(),
+                    });
+                  }
+                  console.log('Start Location:', startLocation);
+                }}
+                query={{
+                  key: GOOGLE_MAPS_API_KEY,
+                  language: 'en',
+                }}
+                styles={{
+                  textInput: styles.input,
+                  listView: { 
+                    backgroundColor: 'white', 
+                    borderRadius: 8,
+                    marginTop: 10,
+                    elevation: 3,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.1,
+                    shadowRadius: 4,
+                  },
+                }}
+              />
+            )}
+            <TouchableOpacity 
+              style={styles.currentLocationButton}
+              onPress={handleCurrentLocation}
+            >
+              <Ionicons name="locate" size={20} color="#2563eb" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.inputContainer}>
@@ -464,11 +563,25 @@ const styles = StyleSheet.create({
   locationIcon: {
     padding: 12,
   },
+  inputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   input: {
     flex: 1,
     padding: 12,
     borderRadius: 8,
     fontSize: 16,
+  },
+  currentLocationButton: {
+    padding: 12,
+    marginLeft: 8,
+  },
+  currentLocationText: {
+    padding: 12,
+    fontSize: 16,
+    color: '#000',
   },
   button: {
     backgroundColor: '#2563eb',

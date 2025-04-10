@@ -330,8 +330,8 @@ const YourRidePage = () => {
       console.log('Rider Route:', JSON.stringify(riderRoute, null, 2));
       console.log('Number of rider route points:', riderRoute.length);
 
-      // Set similarity threshold (70%)
-      const SIMILARITY_THRESHOLD = 70;
+      // Set similarity threshold (75%)
+      const SIMILARITY_THRESHOLD = 75;
 
       hostsSnapshot.forEach((doc) => {
         const hostData = doc.data() as Ride;

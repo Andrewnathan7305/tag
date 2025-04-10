@@ -1,13 +1,16 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Image } from 'react-native';
+import { getDoc, doc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 
 const OtpScreen = () => {
   const router = useRouter();
   const { phone } = useLocalSearchParams();
   const [otp, setOtp] = useState<string[]>(['', '', '', '', '', '']);
   const inputsRef = useRef<Array<TextInput | null>>([]);
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (text: string, index: number) => {
     const newOtp = [...otp];
@@ -19,12 +22,34 @@ const OtpScreen = () => {
     }
   };
 
+  const verifyOTP = async () => {
+    try {
+      setLoading(true);
+      
+      // Check if user exists in Firestore
+      const userDoc = await getDoc(doc(db, 'users', (global as any).phoneNumber));
+      
+      if (!userDoc.exists()) {
+        // New user - redirect to user info page
+        router.replace('/auth/userinfo');
+      } else {
+        // Existing user - redirect to main folder
+        router.replace('/main/yourride');
+      }
+    } catch (error) {
+      console.error('Error checking user:', error);
+      Alert.alert('Error', 'Failed to verify user. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleContinue = () => {
     const enteredOtp = otp.join('');
     if (enteredOtp === '000000') {
       // Store phone number in global scope
       (global as any).phoneNumber = phone;
-      router.replace('/main/ride');
+      verifyOTP();
     } else {
       alert('Invalid OTP. Please try again.');
     }
