@@ -1,7 +1,7 @@
 // app/ride.tsx
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { collection, query, where, getDocs, addDoc, serverTimestamp, orderBy, limit, getDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, serverTimestamp, orderBy, limit, getDoc, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -38,13 +38,42 @@ interface Ride {
   mainRideId: string;
 }
 
+interface Match {
+  id: string;
+  riderPhoneNumber: string;
+  hostPhoneNumber: string;
+  rideId: string;
+  status: string;
+  createdAt: any;
+  riderLocation: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    timestamp: string;
+  };
+  hostLocation: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    timestamp: string;
+  };
+  riderEndLocation: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    timestamp: string;
+  };
+}
+
 const YourRidePage = () => {
   const [nearbyHosts, setNearbyHosts] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
+  const [matchedRiders, setMatchedRiders] = useState<Match[]>([]);
 
   useEffect(() => {
     fetchLocationAndNearbyHosts();
+    fetchMatchedRiders();
   }, []);
 
   const fetchLocationAndNearbyHosts = async () => {
@@ -67,6 +96,48 @@ const YourRidePage = () => {
       Alert.alert('Error', 'Failed to get location. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchMatchedRiders = async () => {
+    try {
+      const matchesQuery = query(
+        collection(db, 'ride_matches'),
+        where('hostPhoneNumber', '==', (global as any).phoneNumber)
+      );
+
+      const unsubscribe = onSnapshot(matchesQuery, async (snapshot) => {
+        const matchesData = await Promise.all(snapshot.docs.map(async (doc) => {
+          const matchData = doc.data();
+          
+          // Fetch the rider's ride document to get their end location
+          const riderRideQuery = query(
+            collection(db, 'rides'),
+            where('rideId', '==', matchData.rideId),
+            where('phoneNumber', '==', matchData.riderPhoneNumber)
+          );
+          
+          const riderRideSnapshot = await getDocs(riderRideQuery);
+          let riderEndLocation = matchData.riderEndLocation;
+          
+          if (!riderRideSnapshot.empty) {
+            const riderRide = riderRideSnapshot.docs[0].data();
+            riderEndLocation = riderRide.endLocation;
+          }
+
+          return {
+            id: doc.id,
+            ...matchData,
+            riderEndLocation
+          } as Match;
+        }));
+
+        setMatchedRiders(matchesData);
+      });
+
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('Error fetching matched riders:', error);
     }
   };
 
@@ -337,7 +408,7 @@ const YourRidePage = () => {
 
       // Create a new ride for the rider
       const rideData = {
-        rideId: hostRide.rideId, // Use the same rideId as the host
+        rideId: hostRide.rideId,
         startLocation: {
           latitude: location?.coords.latitude,
           longitude: location?.coords.longitude,
@@ -350,23 +421,49 @@ const YourRidePage = () => {
         type: 'ride',
         status: 'matched',
         createdAt: serverTimestamp(),
-        hostStartLocation: hostRide.startLocation, // Use the stored address from Firestore
+        hostStartLocation: hostRide.startLocation,
         hostPhoneNumber: hostRide.phoneNumber
       };
 
-      // Save to main rides collection
-      const mainRideRef = await addDoc(collection(db, 'rides'), rideData);
+      // Save to main rides collection with rideId as document ID
+      await setDoc(doc(db, 'rides', hostRide.rideId), rideData);
 
       // Save to user's rides collection with mainRideId
       const userRideData = {
         ...rideData,
-        mainRideId: mainRideRef.id
+        mainRideId: hostRide.rideId
       };
       await addDoc(collection(db, `users/${(global as any).phoneNumber}/rides`), userRideData);
 
+      // Create a match in the ride_matches collection
+      const matchData = {
+        riderPhoneNumber: (global as any).phoneNumber,
+        hostPhoneNumber: hostRide.phoneNumber,
+        rideId: hostRide.rideId,
+        status: 'pending',
+        createdAt: serverTimestamp(),
+        riderLocation: {
+          latitude: location?.coords.latitude,
+          longitude: location?.coords.longitude,
+          address: "Current Location",
+          timestamp: new Date().toISOString()
+        },
+        hostLocation: hostRide.startLocation,
+        riderEndLocation: hostRide.endLocation
+      };
+
+      // Save the match
+      await addDoc(collection(db, 'ride_matches'), matchData);
+
+      // Update the host's ride status to 'matched'
+      const hostRideRef = doc(db, 'rides', hostRide.rideId);
+      await updateDoc(hostRideRef, {
+        status: 'matched'
+      });
+
       Alert.alert(
         'Success',
-        'Ride matched successfully! You can view it in Your Rides.',
+        'Host selected successfully! The host will be notified.',
         [{ text: 'OK' }]
       );
 
@@ -374,7 +471,7 @@ const YourRidePage = () => {
       await fetchNearbyHosts(location!);
     } catch (error) {
       console.error('Error selecting host:', error);
-      Alert.alert('Error', 'Failed to match with host. Please try again.');
+      Alert.alert('Error', 'Failed to select host. Please try again.');
     }
   };
 
@@ -396,8 +493,93 @@ const YourRidePage = () => {
     }
   };
 
+  const handleMatchResponse = async (matchId: string, response: 'accepted' | 'rejected') => {
+    try {
+      const matchRef = doc(db, 'ride_matches', matchId);
+      await updateDoc(matchRef, {
+        status: response
+      });
+
+      if (response === 'accepted') {
+        Alert.alert('Success', 'Rider accepted successfully!');
+      } else {
+        Alert.alert('Success', 'Rider rejected successfully!');
+      }
+    } catch (error) {
+      console.error('Error responding to match:', error);
+      Alert.alert('Error', 'Failed to respond to rider. Please try again.');
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return '#f59e0b'; // orange
+      case 'accepted':
+        return '#10b981'; // green
+      case 'rejected':
+        return '#ef4444'; // red
+      default:
+        return '#6b7280'; // gray
+    }
+  };
+
   return (
     <ScrollView style={styles.container}>
+      <Text style={styles.title}>Your Ride</Text>
+      
+      {/* Show matched riders if user is a host */}
+      {matchedRiders.length > 0 && (
+        <View style={styles.matchedRidersSection}>
+          <Text style={styles.sectionTitle}>Matched Riders</Text>
+          {matchedRiders.map((match) => (
+            <View key={match.id} style={styles.matchCard}>
+              <View style={styles.matchHeader}>
+                <Text style={styles.riderPhone}>Rider: {match.riderPhoneNumber}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(match.status) }]}>
+                  <Text style={styles.statusText}>{match.status}</Text>
+                </View>
+              </View>
+
+              <View style={styles.locationContainer}>
+                <View style={styles.locationRow}>
+                  <Ionicons name="location" size={20} color="#2563eb" />
+                  <Text style={styles.locationText}>Rider Start: {match.riderLocation?.address || 'Location not available'}</Text>
+                </View>
+                <View style={styles.locationRow}>
+                  <Ionicons name="location-outline" size={20} color="#2563eb" />
+                  <Text style={styles.locationText}>Rider End: {match.riderEndLocation?.address || 'Location not available'}</Text>
+                </View>
+                <View style={styles.locationRow}>
+                  <Ionicons name="car" size={20} color="#2563eb" />
+                  <Text style={styles.locationText}>Your Location: {match.hostLocation?.address || 'Location not available'}</Text>
+                </View>
+              </View>
+
+              <View style={styles.actionsContainer}>
+                {match.status === 'pending' && (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.acceptButton]}
+                      onPress={() => handleMatchResponse(match.id, 'accepted')}
+                    >
+                      <Text style={styles.actionButtonText}>Accept</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.rejectButton]}
+                      onPress={() => handleMatchResponse(match.id, 'rejected')}
+                    >
+                      <Text style={styles.actionButtonText}>Reject</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Show nearby hosts if user is a rider */}
       <Text style={styles.title}>Nearby Hosts</Text>
       {loading ? (
         <Text>Loading...</Text>
@@ -526,6 +708,68 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
     fontSize: 16,
+  },
+  matchedRidersSection: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    color: '#1f2937',
+  },
+  matchCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  matchHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  riderPhone: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 12,
+  },
+  actionButton: {
+    padding: 8,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  acceptButton: {
+    backgroundColor: '#10b981',
+  },
+  rejectButton: {
+    backgroundColor: '#ef4444',
+  },
+  actionButtonText: {
+    color: 'white',
+    fontWeight: '600',
   },
 });
 
