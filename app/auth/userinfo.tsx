@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
+import { auth } from '../firebase/config';
 
 export default function UserInfo() {
   const router = useRouter();
@@ -12,7 +13,15 @@ export default function UserInfo() {
   const [gender, setGender] = useState('');
   const [email, setEmail] = useState('');
   const [aadharNumber, setAadharNumber] = useState('');
+  const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const generateOTP = () => {
+    // Generate a 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    setOtp(otp);
+    return otp;
+  };
 
   const handleSubmit = async () => {
     if (!name || !age || !gender || !email || !aadharNumber) {
@@ -25,27 +34,42 @@ export default function UserInfo() {
       return;
     }
 
-    setLoading(true);
     try {
-      const userRef = doc(db, 'users', (global as any).phoneNumber);
-      await setDoc(userRef, {
+      // Generate OTP
+      const userOtp = generateOTP();
+
+      // Create user document in Firestore
+      const userDoc = {
         phoneNumber: (global as any).phoneNumber,
         name,
-        age: parseInt(age),
+        age,
         gender,
         email,
         aadharNumber,
+        otp: userOtp, // Store the OTP
         verified: false,
-        createdAt: new Date().toISOString()
-      });
+        createdAt: serverTimestamp(),
+      };
 
-      Alert.alert('Success', 'Your information has been submitted for verification');
-      router.push('/main/yourride');
+      await setDoc(doc(db, 'users', (global as any).phoneNumber), userDoc);
+      console.log('User document created with OTP:', userOtp);
+
+      // Show success message with OTP
+      Alert.alert(
+        'Success',
+        `Your account has been created successfully!\n\nYour OTP is: ${userOtp}\n\nPlease save this OTP as it will be required for ride confirmation.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              router.replace('/main/yourride');
+            },
+          },
+        ]
+      );
     } catch (error) {
-      console.error('Error saving user info:', error);
-      Alert.alert('Error', 'Failed to save information. Please try again.');
-    } finally {
-      setLoading(false);
+      console.error('Error creating user document:', error);
+      Alert.alert('Error', 'Failed to create user account. Please try again.');
     }
   };
 

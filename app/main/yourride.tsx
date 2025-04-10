@@ -1,10 +1,17 @@
 // app/ride.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { collection, query, where, getDocs, addDoc, serverTimestamp, orderBy, limit, getDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+
+// Constants
+const SIMILARITY_THRESHOLD = 75; // 75% similarity required for route matching
+const MAX_DISTANCE_KM = 5; // Maximum distance in kilometers for showing nearby hosts
+
+// Move API key to a constant
+const GOOGLE_MAPS_API_KEY = 'AIzaSyD0KBLJ0ralEzzvjM69YdBisF1dwOZx4nM';
 
 interface Ride {
   id: string;
@@ -237,92 +244,34 @@ const YourRidePage = () => {
         longitude: currentLocation.coords.longitude
       });
       
-      // Simplified query to avoid needing composite index
-      const hostsQuery = query(
-        collection(db, 'rides'),
-        where('type', '==', 'host')
-      );
-      const hostsSnapshot = await getDocs(hostsQuery);
-      console.log('Total hosts found:', hostsSnapshot.size);
-      
-      const nearbyHostsData: Ride[] = [];
-
-      // First check main rides collection for rider's ride
-      const mainRiderQuery = query(
-        collection(db, 'rides'),
+      // First check if user has any rides
+      const userRidesQuery = query(
+        collection(db, `users/${(global as any).phoneNumber}/rides`),
         where('type', '==', 'rider')
       );
-      const mainRiderSnapshot = await getDocs(mainRiderQuery);
+      const userRidesSnapshot = await getDocs(userRidesQuery);
 
-      let riderRide: Ride | null = null;
-
-      // Find the latest ride for the current user
-      const userRides = mainRiderSnapshot.docs
-        .map(doc => doc.data() as Ride)
-        .filter(ride => ride.phoneNumber === (global as any).phoneNumber)
-        .sort((a, b) => b.createdAt?.toMillis() - a.createdAt?.toMillis());
-
-      if (userRides.length > 0) {
-        riderRide = userRides[0];
-        console.log('Found rider ride in main collection');
-      } else {
-        // If not found in main collection, check user's collection
-        const userRiderQuery = query(
-          collection(db, `users/${(global as any).phoneNumber}/rides`),
-          where('type', '==', 'rider')
-        );
-        const userRiderSnapshot = await getDocs(userRiderQuery);
-        
-        if (!userRiderSnapshot.empty) {
-          // Sort by createdAt desc and get the latest ride
-          const sortedRides = userRiderSnapshot.docs
-            .map(doc => doc.data() as Ride)
-            .sort((a, b) => b.createdAt?.toMillis() - a.createdAt?.toMillis());
-          const userRide = sortedRides[0];
-          // Get the main ride details
-          const mainRideDoc = await getDoc(doc(db, 'rides', userRide.mainRideId));
-          if (mainRideDoc.exists()) {
-            riderRide = mainRideDoc.data() as Ride;
-            console.log('Found rider ride in user collection');
-          }
-        }
-      }
-      
-      if (!riderRide) {
-        console.log('No rider ride found, showing all hosts');
-        // If no ride request exists, show all available hosts
-        hostsSnapshot.forEach((doc) => {
-          const hostData = doc.data() as Ride;
-          // Filter for available hosts client-side
-          if (hostData.status === 'available') {
-            // Check if host is within 500m of current location
-            const distanceToHost = calculateDistance(
-              currentLocation.coords.latitude,
-              currentLocation.coords.longitude,
-              hostData.startLocation.latitude,
-              hostData.startLocation.longitude
-            );
-            
-            console.log('\n=== Checking Host Proximity ===');
-            console.log('Host ID:', doc.id);
-            console.log('Distance to host:', distanceToHost.toFixed(3), 'km');
-            console.log('Host location:', {
-              latitude: hostData.startLocation.latitude,
-              longitude: hostData.startLocation.longitude
-            });
-            
-            if (distanceToHost <= 0.5) { // 500m radius
-              console.log('✅ Host is within 500m radius');
-              nearbyHostsData.push(hostData);
-            } else {
-              console.log('❌ Host is too far from current location');
-            }
-          }
-        });
-        setNearbyHosts(nearbyHostsData);
+      if (userRidesSnapshot.empty) {
+        console.log('No rides found for user, showing empty state');
+        setNearbyHosts([]);
         return;
       }
 
+      // Get the latest ride
+      const sortedRides = userRidesSnapshot.docs
+        .map(doc => doc.data() as Ride)
+        .sort((a, b) => b.createdAt?.toMillis() - a.createdAt?.toMillis());
+      const userRide = sortedRides[0];
+
+      // Get the main ride details
+      const mainRideDoc = await getDoc(doc(db, 'rides', userRide.mainRideId));
+      if (!mainRideDoc.exists()) {
+        console.log('Main ride document not found');
+        setNearbyHosts([]);
+        return;
+      }
+
+      const riderRide = mainRideDoc.data() as Ride;
       const riderRoute = riderRide.routeCoordinates;
       
       console.log('\nRider Details:');
@@ -330,13 +279,22 @@ const YourRidePage = () => {
       console.log('Rider Route:', JSON.stringify(riderRoute, null, 2));
       console.log('Number of rider route points:', riderRoute.length);
 
-      // Set similarity threshold (75%)
-      const SIMILARITY_THRESHOLD = 75;
+      // Query for available hosts
+      const hostsQuery = query(
+        collection(db, 'rides'),
+        where('type', '==', 'host'),
+        where('status', '==', 'available')
+      );
+      const hostsSnapshot = await getDocs(hostsQuery);
+      console.log('Total available hosts found:', hostsSnapshot.size);
+      
+      const nearbyHostsData: Ride[] = [];
 
-      hostsSnapshot.forEach((doc) => {
+      // Process each host
+      for (const doc of hostsSnapshot.docs) {
         const hostData = doc.data() as Ride;
-        // Filter for available hosts client-side
-        if (hostData.status === 'available') {
+        // Filter out own rides
+        if (hostData.phoneNumber !== (global as any).phoneNumber) {
           const hostRoute = hostData.routeCoordinates;
           
           console.log('\n=== Checking Host ===');
@@ -350,7 +308,7 @@ const YourRidePage = () => {
           
           // Calculate path similarity
           const similarityPercentage = calculatePathSimilarity(riderRoute, hostRoute);
-          
+
           // Check if paths are similar enough
           if (similarityPercentage >= SIMILARITY_THRESHOLD) {
             console.log(`✅ Host path is ${similarityPercentage.toFixed(2)}% similar to rider path (threshold: ${SIMILARITY_THRESHOLD}%)`);
@@ -359,7 +317,7 @@ const YourRidePage = () => {
             console.log(`❌ Host path is only ${similarityPercentage.toFixed(2)}% similar to rider path (threshold: ${SIMILARITY_THRESHOLD}%)`);
           }
         }
-      });
+      }
 
       console.log('\n=== Final Results ===');
       console.log('Number of matching hosts:', nearbyHostsData.length);
@@ -367,6 +325,7 @@ const YourRidePage = () => {
     } catch (error) {
       console.error('Error fetching nearby hosts:', error);
       Alert.alert('Error', 'Failed to fetch nearby hosts. Please try again.');
+      setNearbyHosts([]);
     }
   };
 
@@ -390,14 +349,20 @@ const YourRidePage = () => {
         phoneNumber: (global as any).phoneNumber,
         type: 'ride',
         status: 'matched',
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        hostStartLocation: hostRide.startLocation, // Use the stored address from Firestore
+        hostPhoneNumber: hostRide.phoneNumber
       };
 
       // Save to main rides collection
-      await addDoc(collection(db, 'rides'), rideData);
+      const mainRideRef = await addDoc(collection(db, 'rides'), rideData);
 
-      // Save to user's rides collection
-      await addDoc(collection(db, `users/${(global as any).phoneNumber}/rides`), rideData);
+      // Save to user's rides collection with mainRideId
+      const userRideData = {
+        ...rideData,
+        mainRideId: mainRideRef.id
+      };
+      await addDoc(collection(db, `users/${(global as any).phoneNumber}/rides`), userRideData);
 
       Alert.alert(
         'Success',
@@ -410,6 +375,24 @@ const YourRidePage = () => {
     } catch (error) {
       console.error('Error selecting host:', error);
       Alert.alert('Error', 'Failed to match with host. Please try again.');
+    }
+  };
+
+  // Add this helper function to get address from coordinates
+  const getAddressFromCoordinates = async (latitude: number, longitude: number): Promise<string> => {
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`
+      );
+      const data = await response.json();
+      
+      if (data.results && data.results.length > 0) {
+        return data.results[0].formatted_address;
+      }
+      return "Location not found";
+    } catch (error) {
+      console.error('Error getting address:', error);
+      return "Location not found";
     }
   };
 
@@ -456,7 +439,7 @@ const YourRidePage = () => {
             >
               <Text style={styles.selectButtonText}>Select This Host</Text>
             </TouchableOpacity>
-    </View>
+          </View>
         ))
       )}
     </ScrollView>

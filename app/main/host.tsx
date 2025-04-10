@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, TextInput, Alert } from 'react-native';
 import MapView, { Marker, Polyline, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -28,6 +28,19 @@ const HostPage = () => {
   const [currentLocationText, setCurrentLocationText] = useState('');
   const [actualAddress, setActualAddress] = useState('');
   const [isCurrentLocation, setIsCurrentLocation] = useState(false);
+  const [fromLocation, setFromLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    address: string;
+    timestamp: string;
+  } | null>(null);
+  const [toLocation, setToLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    address: string;
+    timestamp: string;
+  } | null>(null);
+  const mapRef = useRef<MapView | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -306,17 +319,24 @@ const HostPage = () => {
       setLocation(currentLocation);
       setCurrentLocationText('Current Location');
       setIsCurrentLocation(true);
-      
-      // Get address from coordinates
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${currentLocation.coords.latitude},${currentLocation.coords.longitude}&key=${GOOGLE_MAPS_API_KEY}`
-      );
-      const json = await response.json();
-      
-      if (json.results && json.results[0]) {
-        const address = json.results[0].formatted_address;
-        setActualAddress(address);
-        setFrom(address); // Store the actual address for internal use
+
+      // Update the from state with "Current Location"
+      setFrom("Current Location");
+      setFromLocation({
+        latitude: currentLocation.coords.latitude,
+        longitude: currentLocation.coords.longitude,
+        address: "Current Location",
+        timestamp: new Date().toISOString()
+      });
+
+      // Update the map marker
+      if (mapRef.current) {
+        mapRef.current.animateToRegion({
+          latitude: currentLocation.coords.latitude,
+          longitude: currentLocation.coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
       }
     } catch (error) {
       console.error('Error getting current location:', error);
@@ -332,6 +352,8 @@ const HostPage = () => {
 
   const handleCurrentLocationClick = () => {
     setIsCurrentLocation(false);
+    setCurrentLocationText('');
+    setFrom('');
   };
 
   if (loading || !location) {
@@ -383,6 +405,22 @@ const HostPage = () => {
                       },
                       timestamp: new Date().getTime(),
                     });
+
+                    setFromLocation({
+                      latitude: details.geometry.location.lat,
+                      longitude: details.geometry.location.lng,
+                      address: startLocation,
+                      timestamp: new Date().toISOString()
+                    });
+
+                    if (mapRef.current) {
+                      mapRef.current.animateToRegion({
+                        latitude: details.geometry.location.lat,
+                        longitude: details.geometry.location.lng,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                      });
+                    }
                   }
                   console.log('Start Location:', startLocation);
                 }}
@@ -501,6 +539,7 @@ const HostPage = () => {
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         }}
+        ref={mapRef}
       >
         <Marker
           coordinate={{
