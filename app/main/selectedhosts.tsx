@@ -9,7 +9,7 @@ interface Match {
   riderPhoneNumber: string;
   hostPhoneNumber: string;
   rideId: string;
-  status: 'pending' | 'accepted' | 'rejected';
+  status: 'pending' | 'accepted' | 'rejected' | 'started';
   createdAt: any;
   riderLocation: {
     latitude: number;
@@ -23,6 +23,7 @@ interface Match {
     address: string;
     timestamp: string;
   };
+  startedAt?: any;
 }
 
 const SelectedHostsPage = () => {
@@ -66,8 +67,25 @@ const SelectedHostsPage = () => {
         return '#10b981'; // green
       case 'rejected':
         return '#ef4444'; // red
+      case 'started':
+        return '#2563eb'; // blue
       default:
         return '#6b7280'; // gray
+    }
+  };
+
+  const getStatusMessage = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'Waiting for host to accept';
+      case 'accepted':
+        return 'Host has accepted. Please share your OTP with the host when they arrive.';
+      case 'rejected':
+        return 'Host has rejected your request';
+      case 'started':
+        return 'Journey has started';
+      default:
+        return status;
     }
   };
 
@@ -98,6 +116,19 @@ const SelectedHostsPage = () => {
                 <Text style={styles.locationText}>Host Location: {match.hostLocation.address}</Text>
               </View>
             </View>
+
+            <View style={styles.statusMessageContainer}>
+              <Text style={styles.statusMessage}>{getStatusMessage(match.status)}</Text>
+            </View>
+
+            {match.status === 'started' && match.startedAt && (
+              <View style={styles.startedContainer}>
+                <Text style={styles.startedText}>Journey Started</Text>
+                <Text style={styles.startedTime}>
+                  Started at: {new Date(match.startedAt.toDate()).toLocaleString()}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.timeContainer}>
               <Ionicons name="time" size={20} color="#2563eb" />
@@ -183,6 +214,34 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 14,
     color: '#6b7280',
+  },
+  statusMessageContainer: {
+    backgroundColor: '#f3f4f6',
+    padding: 10,
+    borderRadius: 8,
+    marginVertical: 10,
+  },
+  statusMessage: {
+    fontSize: 14,
+    color: '#374151',
+    textAlign: 'center',
+  },
+  startedContainer: {
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#e8f5e9',
+    borderRadius: 5,
+    marginTop: 10,
+  },
+  startedText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2e7d32',
+  },
+  startedTime: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 5,
   },
 });
 

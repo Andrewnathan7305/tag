@@ -1,10 +1,11 @@
 // app/ride.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, TextInput } from 'react-native';
 import { collection, query, where, getDocs, addDoc, serverTimestamp, orderBy, limit, getDoc, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { useRouter } from 'expo-router';
 
 // Constants
 const SIMILARITY_THRESHOLD = 75; // 75% similarity required for route matching
@@ -40,36 +41,36 @@ interface Ride {
 
 interface Match {
   id: string;
-  riderPhoneNumber: string;
-  hostPhoneNumber: string;
-  rideId: string;
-  status: string;
-  createdAt: any;
-  riderLocation: {
+  riderPhone: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'started';
+  riderLocation?: {
     latitude: number;
     longitude: number;
     address: string;
-    timestamp: string;
+    timestamp: any;
   };
-  hostLocation: {
+  riderEndLocation?: {
     latitude: number;
     longitude: number;
     address: string;
-    timestamp: string;
+    timestamp: any;
   };
-  riderEndLocation: {
+  hostLocation?: {
     latitude: number;
     longitude: number;
     address: string;
-    timestamp: string;
+    timestamp: any;
   };
+  startedAt?: any;
 }
 
 const YourRidePage = () => {
+  const router = useRouter();
   const [nearbyHosts, setNearbyHosts] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [matchedRiders, setMatchedRiders] = useState<Match[]>([]);
+  const [otpInputs, setOtpInputs] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
     fetchLocationAndNearbyHosts();
@@ -463,12 +464,10 @@ const YourRidePage = () => {
 
       Alert.alert(
         'Success',
-        'Host selected successfully! The host will be notified.',
+        'Host selected successfully! Click the submit button to view your selected hosts.',
         [{ text: 'OK' }]
       );
 
-      // Refresh nearby hosts
-      await fetchNearbyHosts(location!);
     } catch (error) {
       console.error('Error selecting host:', error);
       Alert.alert('Error', 'Failed to select host. Please try again.');
@@ -501,13 +500,151 @@ const YourRidePage = () => {
       });
 
       if (response === 'accepted') {
-        Alert.alert('Success', 'Rider accepted successfully!');
+        Alert.alert(
+          'Rider Accepted',
+          'Please get the OTP from the rider to start the journey.',
+          [{ text: 'OK' }]
+        );
       } else {
         Alert.alert('Success', 'Rider rejected successfully!');
       }
     } catch (error) {
       console.error('Error responding to match:', error);
       Alert.alert('Error', 'Failed to respond to rider. Please try again.');
+    }
+  };
+
+  const handleOtpChange = (matchId: string, value: string) => {
+    console.log('Raw OTP input:', value);
+    // Use the exact input value without any processing
+    setOtpInputs(prev => {
+      const newState = {
+        ...prev,
+        [matchId]: value
+      };
+      console.log('Updated OTP state:', newState);
+      return newState;
+    });
+  };
+
+  const verifyOTP = async (matchId: string) => {
+    try {
+      const enteredOTP = otpInputs[matchId];
+      console.log('Verifying OTP - Entered:', enteredOTP);
+      
+      if (!enteredOTP) {
+        Alert.alert('Error', 'Please enter the OTP');
+        return;
+      }
+
+      // Get the match document
+      const matchDoc = await getDoc(doc(db, 'ride_matches', matchId));
+      if (!matchDoc.exists()) {
+        throw new Error('Match not found');
+      }
+
+      const matchData = matchDoc.data();
+      const riderPhoneNumber = matchData.riderPhoneNumber;
+      console.log('Rider Phone Number:', riderPhoneNumber);
+
+      // Get the rider's user document to verify OTP
+      const riderDoc = await getDoc(doc(db, 'users', riderPhoneNumber));
+      if (!riderDoc.exists()) {
+        throw new Error('Rider not found');
+      }
+
+      const riderData = riderDoc.data();
+      const riderOTP = riderData.otp;
+      console.log('Rider OTP from DB:', riderOTP);
+      console.log('Comparing OTPs - Entered:', enteredOTP, 'Stored:', riderOTP);
+
+      if (enteredOTP === riderOTP) {
+        // Update match status to 'started'
+        await updateDoc(doc(db, 'ride_matches', matchId), {
+          status: 'started',
+          startedAt: serverTimestamp()
+        });
+
+        // Update the ride status to 'started'
+        await updateDoc(doc(db, 'rides', matchData.rideId), {
+          status: 'started',
+          startedAt: serverTimestamp()
+        });
+
+        // Clear the OTP input
+        setOtpInputs(prev => ({ ...prev, [matchId]: '' }));
+
+        Alert.alert('Success', 'OTP verified! Journey has started.');
+      } else {
+        console.log('OTP Mismatch:', {
+          entered: enteredOTP,
+          stored: riderOTP
+        });
+        Alert.alert('Error', 'Invalid OTP. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error verifying OTP:', error);
+      Alert.alert('Error', 'Failed to verify OTP. Please try again.');
+    }
+  };
+
+  // Add a function to check proximity and show OTP
+  const checkProximityAndShowOTP = async (matchId: string) => {
+    try {
+      // Get the match document
+      const matchRef = doc(db, 'ride_matches', matchId);
+      const matchDoc = await getDoc(matchRef);
+      
+      if (!matchDoc.exists()) {
+        throw new Error('Match not found');
+      }
+
+      const matchData = matchDoc.data();
+      
+      // Get current location
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required to verify proximity.');
+        return;
+      }
+
+      const currentLocation = await Location.getCurrentPositionAsync({});
+      
+      // Calculate distance to rider's location
+      const distance = calculateDistance(
+        currentLocation.coords.latitude,
+        currentLocation.coords.longitude,
+        matchData.riderLocation.latitude,
+        matchData.riderLocation.longitude
+      );
+
+      // If within 100 meters, show OTP
+      if (distance <= 0.1) { // 100 meters
+        // Get the rider's OTP
+        const riderQuery = query(
+          collection(db, 'users'),
+          where('phoneNumber', '==', matchData.riderPhoneNumber)
+        );
+        const riderSnapshot = await getDocs(riderQuery);
+        
+        if (!riderSnapshot.empty) {
+          const riderData = riderSnapshot.docs[0].data();
+          Alert.alert(
+            'Proximity Verified',
+            `You are near the rider's location. OTP: ${riderData.otp}`,
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        Alert.alert(
+          'Too Far',
+          `You are ${distance.toFixed(2)} km away from the rider. Please get closer to verify the ride.`,
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error) {
+      console.error('Error checking proximity:', error);
+      Alert.alert('Error', 'Failed to check proximity. Please try again.');
     }
   };
 
@@ -532,50 +669,85 @@ const YourRidePage = () => {
       {matchedRiders.length > 0 && (
         <View style={styles.matchedRidersSection}>
           <Text style={styles.sectionTitle}>Matched Riders</Text>
-          {matchedRiders.map((match) => (
-            <View key={match.id} style={styles.matchCard}>
-              <View style={styles.matchHeader}>
-                <Text style={styles.riderPhone}>Rider: {match.riderPhoneNumber}</Text>
-                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(match.status) }]}>
-                  <Text style={styles.statusText}>{match.status}</Text>
+          <View style={styles.matchedRidersContainer}>
+            {matchedRiders.map((match) => (
+              <View key={match.id} style={styles.matchedRiderCard}>
+                <View style={styles.matchHeader}>
+                  <Text style={styles.riderPhone}>Rider: {match.riderPhone}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(match.status) }]}>
+                    <Text style={styles.statusText}>{match.status}</Text>
+                  </View>
                 </View>
-              </View>
+                
+                <View style={styles.locationContainer}>
+                  <View style={styles.locationRow}>
+                    <Ionicons name="location" size={16} color="#666" />
+                    <Text style={styles.locationText}>Rider Start: {match.riderLocation?.address || 'Location not available'}</Text>
+                  </View>
+                  <View style={styles.locationRow}>
+                    <Ionicons name="flag" size={16} color="#666" />
+                    <Text style={styles.locationText}>Rider End: {match.riderEndLocation?.address || 'Location not available'}</Text>
+                  </View>
+                  <View style={styles.locationRow}>
+                    <Ionicons name="car" size={16} color="#666" />
+                    <Text style={styles.locationText}>Host Location: {match.hostLocation?.address || 'Location not available'}</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.actionsContainer}>
+                  {match.status === 'pending' && (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.actionButton, styles.acceptButton]}
+                        onPress={() => handleMatchResponse(match.id, 'accepted')}
+                      >
+                        <Text style={styles.actionButtonText}>Accept</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.actionButton, styles.rejectButton]}
+                        onPress={() => handleMatchResponse(match.id, 'rejected')}
+                      >
+                        <Text style={styles.actionButtonText}>Reject</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                  
+                  {match.status === 'accepted' && (
+                    <View style={styles.otpContainer}>
+                      <TextInput
+                        style={styles.otpInput}
+                        placeholder="Enter OTP from rider"
+                        keyboardType="numeric"
+                        maxLength={6}
+                        value={otpInputs[match.id] || ''}
+                        onChangeText={(text) => handleOtpChange(match.id, text)}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        secureTextEntry={true}
+                      />
+                      <TouchableOpacity
+                        style={[styles.actionButton, styles.verifyButton]}
+                        onPress={() => verifyOTP(match.id)}
+                      >
+                        <Text style={styles.actionButtonText}>Start Journey</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
 
-              <View style={styles.locationContainer}>
-                <View style={styles.locationRow}>
-                  <Ionicons name="location" size={20} color="#2563eb" />
-                  <Text style={styles.locationText}>Rider Start: {match.riderLocation?.address || 'Location not available'}</Text>
-                </View>
-                <View style={styles.locationRow}>
-                  <Ionicons name="location-outline" size={20} color="#2563eb" />
-                  <Text style={styles.locationText}>Rider End: {match.riderEndLocation?.address || 'Location not available'}</Text>
-                </View>
-                <View style={styles.locationRow}>
-                  <Ionicons name="car" size={20} color="#2563eb" />
-                  <Text style={styles.locationText}>Your Location: {match.hostLocation?.address || 'Location not available'}</Text>
+                  {match.status === 'started' && (
+                    <View style={styles.startedContainer}>
+                      <Text style={styles.startedText}>Journey Started</Text>
+                      {match.startedAt && (
+                        <Text style={styles.startedTime}>
+                          Started at: {new Date(match.startedAt.toDate()).toLocaleString()}
+                        </Text>
+                      )}
+                    </View>
+                  )}
                 </View>
               </View>
-
-              <View style={styles.actionsContainer}>
-                {match.status === 'pending' && (
-                  <>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.acceptButton]}
-                      onPress={() => handleMatchResponse(match.id, 'accepted')}
-                    >
-                      <Text style={styles.actionButtonText}>Accept</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.rejectButton]}
-                      onPress={() => handleMatchResponse(match.id, 'rejected')}
-                    >
-                      <Text style={styles.actionButtonText}>Reject</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-            </View>
-          ))}
+            ))}
+          </View>
         </View>
       )}
 
@@ -621,9 +793,17 @@ const YourRidePage = () => {
             >
               <Text style={styles.selectButtonText}>Select This Host</Text>
             </TouchableOpacity>
-          </View>
+    </View>
         ))
       )}
+
+      {/* Add Submit Button */}
+      <TouchableOpacity 
+        style={styles.submitButton}
+        onPress={() => router.push('/main/selectedhosts')}
+      >
+        <Text style={styles.submitButtonText}>View Selected Hosts</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 };
@@ -673,7 +853,7 @@ const styles = StyleSheet.create({
     color: '#059669',
   },
   locationContainer: {
-    marginBottom: 12,
+    marginVertical: 10,
   },
   locationRow: {
     flexDirection: 'row',
@@ -682,8 +862,8 @@ const styles = StyleSheet.create({
   },
   locationText: {
     marginLeft: 8,
-    fontSize: 16,
-    color: '#374151',
+    fontSize: 14,
+    color: '#666',
   },
   detailsContainer: {
     marginBottom: 12,
@@ -718,7 +898,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     color: '#1f2937',
   },
-  matchCard: {
+  matchedRidersContainer: {
+    marginBottom: 24,
+  },
+  matchedRiderCard: {
     backgroundColor: 'white',
     borderRadius: 12,
     padding: 16,
@@ -770,6 +953,57 @@ const styles = StyleSheet.create({
   actionButtonText: {
     color: 'white',
     fontWeight: '600',
+  },
+  otpContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  otpInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: 8,
+    marginRight: 8,
+    fontSize: 16,
+  },
+  verifyButton: {
+    backgroundColor: '#2563eb',
+  },
+  checkProximityButton: {
+    backgroundColor: '#f59e0b',
+    marginBottom: 12,
+  },
+  startedContainer: {
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#e8f5e9',
+    borderRadius: 5,
+    marginTop: 10,
+  },
+  startedText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2e7d32',
+  },
+  startedTime: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 5,
+  },
+  submitButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 10,
+    margin: 20,
+    alignItems: 'center',
+  },
+  submitButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
 
