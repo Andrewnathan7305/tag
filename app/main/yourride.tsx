@@ -41,7 +41,7 @@ interface Ride {
 
 interface Match {
   id: string;
-  riderPhone: string;
+  riderPhoneNumber: string;
   status: 'pending' | 'accepted' | 'rejected' | 'started';
   riderLocation?: {
     latitude: number;
@@ -673,7 +673,7 @@ const YourRidePage = () => {
             {matchedRiders.map((match) => (
               <View key={match.id} style={styles.matchedRiderCard}>
                 <View style={styles.matchHeader}>
-                  <Text style={styles.riderPhone}>Rider: {match.riderPhone}</Text>
+                  <Text style={styles.riderPhone}>Rider: {match.riderPhoneNumber}</Text>
                   <View style={[styles.statusBadge, { backgroundColor: getStatusColor(match.status) }]}>
                     <Text style={styles.statusText}>{match.status}</Text>
                   </View>
