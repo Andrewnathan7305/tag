@@ -42,7 +42,9 @@ interface Ride {
 interface Match {
   id: string;
   riderPhoneNumber: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'started';
+  hostPhoneNumber: string;
+  rideId: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'started' | 'completed';
   riderLocation?: {
     latitude: number;
     longitude: number;
@@ -62,6 +64,7 @@ interface Match {
     timestamp: any;
   };
   startedAt?: any;
+  completedAt?: any;
 }
 
 const YourRidePage = () => {
@@ -347,7 +350,16 @@ const YourRidePage = () => {
       const riderRoute = riderRide.routeCoordinates;
       
       console.log('\nRider Details:');
-      console.log('Rider Phone:', riderRide.phoneNumber);
+      console.log('Start Location:', {
+        latitude: riderRide.startLocation.latitude,
+        longitude: riderRide.startLocation.longitude,
+        address: riderRide.startLocation.address
+      });
+      console.log('End Location:', {
+        latitude: riderRide.endLocation.latitude,
+        longitude: riderRide.endLocation.longitude,
+        address: riderRide.endLocation.address
+      });
       console.log('Rider Route:', JSON.stringify(riderRoute, null, 2));
       console.log('Number of rider route points:', riderRoute.length);
 
@@ -372,9 +384,15 @@ const YourRidePage = () => {
           console.log('\n=== Checking Host ===');
           console.log('Host ID:', doc.id);
           console.log('Host Phone:', hostData.phoneNumber);
-          console.log('Host location:', {
+          console.log('Host Start Location:', {
             latitude: hostData.startLocation.latitude,
-            longitude: hostData.startLocation.longitude
+            longitude: hostData.startLocation.longitude,
+            address: hostData.startLocation.address
+          });
+          console.log('Host End Location:', {
+            latitude: hostData.endLocation.latitude,
+            longitude: hostData.endLocation.longitude,
+            address: hostData.endLocation.address
           });
           console.log('Number of host route points:', hostRoute.length);
           
@@ -648,6 +666,27 @@ const YourRidePage = () => {
     }
   };
 
+  const handleEndRide = async (matchId: string, rideId: string) => {
+    try {
+      // Update match status to 'completed'
+      await updateDoc(doc(db, 'ride_matches', matchId), {
+        status: 'completed',
+        completedAt: serverTimestamp()
+      });
+
+      // Update the ride status to 'completed'
+      await updateDoc(doc(db, 'rides', rideId), {
+        status: 'completed',
+        completedAt: serverTimestamp()
+      });
+
+      Alert.alert('Success', 'Ride completed successfully!');
+    } catch (error) {
+      console.error('Error ending ride:', error);
+      Alert.alert('Error', 'Failed to end ride. Please try again.');
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending':
@@ -656,6 +695,10 @@ const YourRidePage = () => {
         return '#10b981'; // green
       case 'rejected':
         return '#ef4444'; // red
+      case 'started':
+        return '#2563eb'; // blue
+      case 'completed':
+        return '#6b7280'; // gray
       default:
         return '#6b7280'; // gray
     }
@@ -742,6 +785,23 @@ const YourRidePage = () => {
                           Started at: {new Date(match.startedAt.toDate()).toLocaleString()}
                         </Text>
                       )}
+                      <TouchableOpacity
+                        style={[styles.actionButton, styles.endRideButton]}
+                        onPress={() => handleEndRide(match.id, match.rideId)}
+                      >
+                        <Text style={styles.actionButtonText}>End Ride</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {match.status === 'completed' && (
+                    <View style={styles.completedContainer}>
+                      <Text style={styles.completedText}>Ride Completed</Text>
+                      {match.completedAt && (
+                        <Text style={styles.completedTime}>
+                          Completed at: {new Date(match.completedAt.toDate()).toLocaleString()}
+                        </Text>
+                      )}
                     </View>
                   )}
                 </View>
@@ -793,7 +853,7 @@ const YourRidePage = () => {
             >
               <Text style={styles.selectButtonText}>Select This Host</Text>
             </TouchableOpacity>
-    </View>
+          </View>
         ))
       )}
 
@@ -1004,6 +1064,27 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  endRideButton: {
+    backgroundColor: '#ef4444',
+    marginTop: 10,
+  },
+  completedContainer: {
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 5,
+    marginTop: 10,
+  },
+  completedText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6b7280',
+  },
+  completedTime: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 5,
   },
 });
 
